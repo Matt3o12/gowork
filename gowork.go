@@ -1,6 +1,7 @@
 package gowork
 
 import (
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -16,12 +17,33 @@ func getGopath() string {
 	return os.Getenv("GOPATH")
 }
 
+// Checks if dir is a proper directory (i.e. isDir returns true and it is
+// visible).
+func isProperDirectory(dir os.FileInfo) bool {
+	if !dir.IsDir() {
+		log.Debug("Not a directory: %v, skipping...", dir.Name())
+		return false
+	}
+
+	if dir.Name()[0] == '.' {
+		log.Debug("Invisible file: %v, skipping...", dir.Name())
+		return false
+	}
+
+	return true
+}
+
 // A Distributor is github, bitbucket or every other hoster for goprojects.
 type Distributor string
 
 // AbsPath returns the absolute path for this distributor.
 func (d Distributor) AbsPath() string {
-	return path.Join(getGopath(), "src", string(d))
+	return path.Join(getGopath(), "src", d.Name())
+}
+
+// Name returns the name of the distro (e.g. github.com)
+func (d Distributor) Name() string {
+	return string(d)
 }
 
 // AllDistributors returns all `Distributor`s in the gopath.
@@ -33,17 +55,9 @@ func AllDistributors() ([]Distributor, error) {
 
 	var distrbutors []Distributor
 	for _, theDir := range dirs {
-		if !theDir.IsDir() {
-			log.Debug("Not a directory: %v, skipping...", theDir.Name())
-			continue
+		if isProperDirectory(theDir) {
+			distrbutors = append(distrbutors, Distributor(theDir.Name()))
 		}
-
-		if theDir.Name()[0] == '.' {
-			log.Debug("Invisible file: %v, skipping...", theDir.Name())
-			continue
-		}
-
-		distrbutors = append(distrbutors, Distributor(theDir.Name()))
 	}
 
 	return distrbutors, nil
@@ -73,4 +87,48 @@ func (a Author) Split() (distro Distributor, name string) {
 func (a Author) AbsPath() string {
 	distro, name := a.Split()
 	return path.Join(distro.AbsPath(), name)
+}
+
+// Error returned when author could not be found.
+var ErrAuthorCouldNotBeFound = errors.New("Author could not be found")
+
+// FindAuthor tries to find author in all distros. If the author could not be
+// found, it returns the `ErrAuthorCouldNotBeFound` error.
+// The first match will be returned. That means if the author has a
+// reposetory on github.com and bitbucket.com, the author string will most
+// likely be: bitbucket.com/name (don't rely on that, though. It might as well
+// return github).
+// If you need to find the author on a known Distributor, use: `FindAuthorIn`.
+func FindAuthor(name string) (Author, error) {
+	distros, err := AllDistributors()
+	if err != nil {
+		return "", err
+	}
+
+	for _, theDistro := range distros {
+		author, err := FindAuthorIn(name, theDistro)
+		if err == nil {
+			return author, nil
+		} else if err != ErrAuthorCouldNotBeFound {
+			return author, err
+		}
+	}
+
+	return "", ErrAuthorCouldNotBeFound
+}
+
+// FindAuthorIn tries to find author in the given distribution.
+func FindAuthorIn(name string, distro Distributor) (Author, error) {
+	files, err := ioutil.ReadDir(distro.AbsPath())
+	if err != nil {
+		return "", err
+	}
+
+	for _, dir := range files {
+		if isProperDirectory(dir) && strings.EqualFold(name, dir.Name()) {
+			return NewAuthor(distro, dir.Name()), nil
+		}
+	}
+
+	return "", ErrAuthorCouldNotBeFound
 }

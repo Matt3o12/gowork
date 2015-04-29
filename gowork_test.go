@@ -35,6 +35,9 @@ func makeProjectTree(t *testing.T) (string, func()) {
 	require.NoError(t, err)
 
 	projects := []string{
+		path.Join("aaa", "user", "project"),
+		path.Join("bbb", "user", "project"),
+		path.Join("ccc", "user", "project"),
 		path.Join("github.com", "matt3o12", "gowork"),
 		path.Join("github.com", "matt3o12", "termui-widgets"),
 		path.Join("github.com", "stretchr", "testify"),
@@ -85,7 +88,9 @@ func TestMakeProjectTree(t *testing.T) {
 		}
 	}
 
-	assertDir("github.com", "matt3o12", "gowork")
+	assertDir("aaa", "user", "project")
+	assertDir("bbb", "user", "project")
+	assertDir("ccc", "user", "project")
 	assertDir("github.com", "matt3o12", "termui-widgets")
 	assertDir("github.com", "stretchr", "testify")
 	assertDir("code.google.com", "p", "cascadia")
@@ -104,6 +109,7 @@ func TestDistributor(t *testing.T) {
 
 	distro := Distributor("github.com")
 	assert.Equal(t, "/foo/bar/src/github.com", distro.AbsPath())
+	assert.Equal(t, "github.com", distro.Name())
 }
 
 func TestAllDistributors(t *testing.T) {
@@ -116,7 +122,11 @@ func TestAllDistributors(t *testing.T) {
 	defer deferF()
 	defer patchEnv("GOPATH", dir)()
 	distros, err = AllDistributors()
-	expected := []Distributor{"code.google.com", "github.com"}
+	expected := []Distributor{
+		"aaa", "bbb", "ccc",
+		"code.google.com",
+		"github.com",
+	}
 	assert.Equal(t, expected, distros)
 }
 
@@ -131,4 +141,81 @@ func TestAuthor(t *testing.T) {
 
 	defer patchEnv("GOPATH", "/gopath/")()
 	assert.Equal(t, "/gopath/src/github.com/foo", author.AbsPath())
+}
+
+func TestFindAuthor(t *testing.T) {
+	dir, deferF := makeProjectTree(t)
+	defer deferF()
+	defer patchEnv("GOPATH", dir)()
+
+	author, err := FindAuthor("matt3o12")
+	assert.NoError(t, err)
+	assert.Equal(t, Author("github.com/matt3o12"), author)
+
+	author, err = FindAuthor("does-not-exist")
+	assert.Equal(t, ErrAuthorCouldNotBeFound, err)
+	assert.Equal(t, "", author, "No author expected")
+}
+
+func TestFindAuthorIn(t *testing.T) {
+	dir, deferF := makeProjectTree(t)
+	defer deferF()
+	defer patchEnv("GOPATH", dir)()
+
+	assertAuthor := func(distro Distributor, name string) {
+		expected := NewAuthor(distro, name)
+		author, err := FindAuthorIn(name, distro)
+		assert.NoError(t, err)
+		assert.Equal(t, expected, author)
+	}
+
+	assertNotAuthor := func(distro Distributor, name string) {
+		author, err := FindAuthorIn(name, distro)
+		msg := "Expected author %v in %v not to be found."
+		assert.Error(t, err, name, msg, distro.Name())
+
+		msg = "Did not expect to return an author. Got: %v"
+		assert.Equal(t, "", author, msg, author)
+	}
+
+	assertAuthor("aaa", "user")
+	assertAuthor("bbb", "user")
+	assertAuthor("ccc", "user")
+
+	assertNotAuthor("github.com", "not-exist")
+	assertNotAuthor("not-exist", "user")
+}
+
+func TestIsProperDirectory(t *testing.T) {
+	dir, err := ioutil.TempDir("", "")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	file, err := os.Create(path.Join(dir, "test.txt"))
+	require.NoError(t, err)
+
+	stat, err := file.Stat()
+	require.NoError(t, err)
+
+	assert.False(t, isProperDirectory(stat), "expeted test.txt not to be a dir.")
+
+	mkdir := func(name string) os.FileInfo {
+		err := os.Mkdir(path.Join(dir, name), 0777)
+		require.NoError(t, err)
+
+		stat, err := os.Stat(path.Join(dir, name))
+		require.NoError(t, err)
+
+		return stat
+	}
+
+	stat = mkdir(".hidden")
+
+	msg := "expected .hidden not to be a valid dir because it is hidden."
+	assert.False(t, isProperDirectory(stat), msg)
+
+	stat = mkdir("real-dir")
+
+	msg = "expected real-dir to be recognized as a proper directory."
+	assert.True(t, isProperDirectory(stat), msg)
 }
