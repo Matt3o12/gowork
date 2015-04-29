@@ -154,7 +154,7 @@ func TestFindAuthor(t *testing.T) {
 
 	author, err = FindAuthor("does-not-exist")
 	assert.Equal(t, ErrAuthorCouldNotBeFound, err)
-	assert.Equal(t, "", author, "No author expected")
+	assert.Equal(t, Author(""), author, "No author expected")
 }
 
 func TestFindAuthorIn(t *testing.T) {
@@ -175,7 +175,7 @@ func TestFindAuthorIn(t *testing.T) {
 		assert.Error(t, err, name, msg, distro.Name())
 
 		msg = "Did not expect to return an author. Got: %v"
-		assert.Equal(t, "", author, msg, author)
+		assert.Equal(t, Author(""), author, msg, author)
 	}
 
 	assertAuthor("aaa", "user")
