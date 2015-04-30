@@ -130,3 +130,45 @@ func FindAuthorIn(name string, distro Distributor) (Author, error) {
 
 	return "", ErrAuthorCouldNotBeFound
 }
+
+// A Project must include the distributor and the author like so:
+// distro/author/project.
+// If you want to create a new project object, please use: NewProject instead.
+type Project string
+
+// NewProject creates a new project for the given author with the given name.
+func NewProject(a Author, name string) Project {
+	return Project(fmt.Sprintf("%v/%v", string(a), name))
+}
+
+// Split splits the project into its 3 components: the distro, the author,
+// and the name
+func (p Project) Split() (Distributor, Author, string) {
+	split := strings.SplitN(string(p), "/", 3)
+	distro := Distributor(split[0])
+	return distro, NewAuthor(distro, split[1]), split[2]
+}
+
+// Distributor returns the distro of the project.
+func (p Project) Distributor() Distributor {
+	distro, _, _ := p.Split()
+	return distro
+}
+
+// Author returns the author of the project.
+func (p Project) Author() Author {
+	_, author, _ := p.Split()
+	return author
+}
+
+// Name returns the name of the project.
+func (p Project) Name() string {
+	_, _, name := p.Split()
+	return name
+}
+
+// AbsPath returns the absolute path of the project using the GOPATH env
+// variable.
+func (p Project) AbsPath() string {
+	return path.Join(p.Author().AbsPath(), p.Name())
+}

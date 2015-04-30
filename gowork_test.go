@@ -226,3 +226,21 @@ func TestIsProperDirectory(t *testing.T) {
 	msg = "expected real-dir to be recognized as a proper directory."
 	assert.True(t, isProperDirectory(stat), msg)
 }
+
+func TestProject(t *testing.T) {
+	distro := Distributor("github.com")
+	author := NewAuthor(distro, "foo")
+	project := NewProject(author, "bar/test")
+
+	rDistro, rAuthor, rProject := project.Split()
+	assert.Equal(t, distro, rDistro)
+	assert.Equal(t, author, rAuthor)
+	assert.Equal(t, "bar/test", rProject)
+
+	assert.Equal(t, distro, project.Distributor())
+	assert.Equal(t, author, project.Author())
+	assert.Equal(t, "bar/test", project.Name())
+
+	defer patchEnv("GOPATH", "/gopath")()
+	assert.Equal(t, "/gopath/src/github.com/foo/bar/test", project.AbsPath())
+}
