@@ -144,11 +144,18 @@ func TestAuthor(t *testing.T) {
 }
 
 func TestFindAuthor(t *testing.T) {
+	defer patchEnv("GOPATH", "not-exist")()
+	author, err := FindAuthor("barfoo")
+
+	msg := "Expected no author to be found, got: %v"
+	assert.Equal(t, Author(""), author, msg, author)
+	assert.EqualError(t, err, "open not-exist/src: no such file or directory")
+
 	dir, deferF := makeProjectTree(t)
 	defer deferF()
 	defer patchEnv("GOPATH", dir)()
 
-	author, err := FindAuthor("matt3o12")
+	author, err = FindAuthor("matt3o12")
 	assert.NoError(t, err)
 	assert.Equal(t, Author("github.com/matt3o12"), author)
 

@@ -109,8 +109,6 @@ func FindAuthor(name string) (Author, error) {
 		author, err := FindAuthorIn(name, theDistro)
 		if err == nil {
 			return author, nil
-		} else if err != ErrAuthorCouldNotBeFound {
-			return author, err
 		}
 	}
 
