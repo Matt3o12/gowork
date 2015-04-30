@@ -46,6 +46,23 @@ func (d Distributor) Name() string {
 	return string(d)
 }
 
+// Authors returns all authors that are distributed by the distributor.
+func (d Distributor) Authors() ([]Author, error) {
+	dirs, err := ioutil.ReadDir(d.AbsPath())
+	if err != nil {
+		return nil, err
+	}
+
+	var authors []Author
+	for _, theDir := range dirs {
+		if isProperDirectory(theDir) {
+			authors = append(authors, NewAuthor(d, theDir.Name()))
+		}
+	}
+
+	return authors, nil
+}
+
 // AllDistributors returns all `Distributor`s in the gopath.
 func AllDistributors() ([]Distributor, error) {
 	dirs, err := ioutil.ReadDir(path.Join(getGopath(), "src"))
@@ -83,10 +100,39 @@ func (a Author) Split() (distro Distributor, name string) {
 	return
 }
 
+// Name returns the author's name
+func (a Author) Name() string {
+	_, name := a.Split()
+	return name
+}
+
+// Distributor returns the author's `Distributor`.
+func (a Author) Distributor() Distributor {
+	d, _ := a.Split()
+	return d
+}
+
 // AbsPath returns the absolute path to all the author's projects.
 func (a Author) AbsPath() string {
 	distro, name := a.Split()
 	return path.Join(distro.AbsPath(), name)
+}
+
+// Projects returns all projects that belong to the author in the given repo.
+func (a Author) Projects() ([]Project, error) {
+	dirs, err := ioutil.ReadDir(a.AbsPath())
+	if err != nil {
+		return nil, err
+	}
+
+	var projects []Project
+	for _, theDir := range dirs {
+		if isProperDirectory(theDir) {
+			projects = append(projects, NewProject(a, theDir.Name()))
+		}
+	}
+
+	return projects, nil
 }
 
 // Error returned when author could not be found.
@@ -117,14 +163,14 @@ func FindAuthor(name string) (Author, error) {
 
 // FindAuthorIn tries to find author in the given distribution.
 func FindAuthorIn(name string, distro Distributor) (Author, error) {
-	files, err := ioutil.ReadDir(distro.AbsPath())
+	authors, err := distro.Authors()
 	if err != nil {
 		return "", err
 	}
 
-	for _, dir := range files {
-		if isProperDirectory(dir) && strings.EqualFold(name, dir.Name()) {
-			return NewAuthor(distro, dir.Name()), nil
+	for _, theAuthor := range authors {
+		if strings.EqualFold(theAuthor.Name(), name) {
+			return theAuthor, nil
 		}
 	}
 

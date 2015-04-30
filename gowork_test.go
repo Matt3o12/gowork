@@ -92,6 +92,7 @@ func TestMakeProjectTree(t *testing.T) {
 	assertDir("bbb", "user", "project")
 	assertDir("ccc", "user", "project")
 	assertDir("github.com", "matt3o12", "termui-widgets")
+	assertDir("github.com", "matt3o12", "gowork")
 	assertDir("github.com", "stretchr", "testify")
 	assertDir("code.google.com", "p", "cascadia")
 	assertDir(".hidden")
@@ -110,6 +111,27 @@ func TestDistributor(t *testing.T) {
 	distro := Distributor("github.com")
 	assert.Equal(t, "/foo/bar/src/github.com", distro.AbsPath())
 	assert.Equal(t, "github.com", distro.Name())
+}
+
+func TestDistributor_Authors(t *testing.T) {
+	dir, deferF := makeProjectTree(t)
+	defer deferF()
+	defer patchEnv("GOPATH", dir)()
+
+	distro := Distributor("github.com")
+	a := func(n ...string) []Author {
+		authors := make([]Author, len(n))
+		for i, name := range n {
+			authors[i] = NewAuthor(distro, name)
+		}
+
+		return authors
+	}
+
+	authors, err := distro.Authors()
+	if assert.NoError(t, err) {
+		assert.Equal(t, a("matt3o12", "stretchr"), authors)
+	}
 }
 
 func TestAllDistributors(t *testing.T) {
@@ -139,8 +161,31 @@ func TestAuthor(t *testing.T) {
 	assert.Equal(t, rDistro, distro)
 	assert.Equal(t, "foo", rAuthor)
 
+	assert.Equal(t, distro, author.Distributor())
+	assert.Equal(t, "foo", author.Name())
+
 	defer patchEnv("GOPATH", "/gopath/")()
 	assert.Equal(t, "/gopath/src/github.com/foo", author.AbsPath())
+}
+
+func TestAuthor_Projects(t *testing.T) {
+	author := Author("github.com/matt3o12")
+
+	defer patchEnv("GOPATH", "not-exist")()
+	projects, err := author.Projects()
+	msg := "open not-exist/src/github.com/matt3o12: no such file or directory"
+	assert.EqualError(t, err, msg)
+	assert.Empty(t, projects, "Expected to return no projects, got: %v", projects)
+
+	dir, deferF := makeProjectTree(t)
+	defer deferF()
+	defer patchEnv("GOPATH", dir)()
+
+	projects, err = author.Projects()
+	if assert.NoError(t, err) {
+		assert.Equal(t, Project("github.com/matt3o12/gowork"), projects[0])
+		assert.Equal(t, Project("github.com/matt3o12/termui-widgets"), projects[1])
+	}
 }
 
 func TestFindAuthor(t *testing.T) {
