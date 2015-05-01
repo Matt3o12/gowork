@@ -218,3 +218,111 @@ func (p Project) Name() string {
 func (p Project) AbsPath() string {
 	return path.Join(p.Author().AbsPath(), p.Name())
 }
+
+// The ProjectMatchType indecates what part of the project path matched:
+// the distributor, the author, or the project.
+// This is used for priotizing the project.
+type ProjectMatchType uint
+
+// All possible matches.
+const (
+	MatchDistro ProjectMatchType = iota
+	MatchAuthor
+	MatchProject
+
+	matchReset = ProjectMatchType(^uint(0))
+)
+
+// The ProjectMatch contains the `Project` and the `ProjectMatchType`.
+type ProjectMatch struct {
+	Project   Project
+	MatchType ProjectMatchType
+}
+
+type hasName interface {
+	Name() string
+}
+
+func matches(search bool, needle string, hayStraw hasName) bool {
+	name := hayStraw.Name()
+	if search {
+		return strings.Contains(strings.ToLower(name), strings.ToLower(needle))
+	}
+
+	return strings.EqualFold(name, needle)
+}
+
+func resetMatch(match *ProjectMatchType, scope ProjectMatchType) {
+	if *match == scope {
+		*match = matchReset
+	}
+}
+
+func getBestMatch(matchesDistro, matchesAuthor, matchesProject bool) ProjectMatchType {
+	switch {
+	case matchesProject:
+		return MatchProject
+
+	case matchesAuthor:
+		return MatchAuthor
+
+	case matchesDistro:
+		return MatchDistro
+
+	default:
+		return matchReset
+	}
+}
+
+// FindProject looks for the project in all given paths. The ProjectMatch and
+// error channel will be closed once all distros are searched. It closes
+// earlier if an error was encountered.
+// If the search flag is falls only exact matches will be returned. If
+// the search flag is true, "git" will also match "github.com"
+func FindProject(name string, search bool, pCh chan ProjectMatch, eCh chan error) {
+	defer func() {
+		close(pCh)
+		close(eCh)
+	}()
+
+	checkErr := func(err error) bool {
+		if err != nil {
+			eCh <- err
+			return true
+		}
+
+		return false
+	}
+
+	distros, err := AllDistributors()
+	if checkErr(err) {
+		return
+	}
+
+	for _, theDistro := range distros {
+		matchesDistro := matches(search, name, theDistro)
+		authors, err := theDistro.Authors()
+		if checkErr(err) {
+			return
+		}
+
+		for _, theAuthor := range authors {
+			matchesAuthor := matches(search, name, theAuthor)
+			projects, err := theAuthor.Projects()
+			if checkErr(err) {
+				return
+			}
+
+			for _, theProject := range projects {
+				matchesProject := matches(search, name, theProject)
+				if !(matchesDistro || matchesAuthor || matchesProject) {
+					continue
+				}
+
+				bestMatch := getBestMatch(matchesDistro, matchesAuthor, matchesProject)
+				projMatch := ProjectMatch{theProject, bestMatch}
+				pCh <- projMatch
+			}
+		}
+	}
+}

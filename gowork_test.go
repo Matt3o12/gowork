@@ -1,6 +1,7 @@
 package gowork
 
 import (
+	"errors"
 	"io/ioutil"
 	"os"
 	"path"
@@ -30,7 +31,9 @@ func patchEnv(key, value string) func() {
 	return deferFunc
 }
 
-func makeProjectTree(t *testing.T) (string, func()) {
+type deferFunction func()
+
+func makeProjectTree(t *testing.T) (string, deferFunction) {
 	dir, err := ioutil.TempDir("", "")
 	require.NoError(t, err)
 
@@ -59,6 +62,15 @@ func makeProjectTree(t *testing.T) (string, func()) {
 
 	return dir, func() {
 		os.RemoveAll(dir)
+	}
+}
+
+func makeTreeAndEnv(t *testing.T) deferFunction {
+	dir, defer1 := makeProjectTree(t)
+	defer2 := patchEnv("GOPATH", dir)
+	return func() {
+		defer1()
+		defer2()
 	}
 }
 
@@ -114,9 +126,7 @@ func TestDistributor(t *testing.T) {
 }
 
 func TestDistributor_Authors(t *testing.T) {
-	dir, deferF := makeProjectTree(t)
-	defer deferF()
-	defer patchEnv("GOPATH", dir)()
+	defer makeTreeAndEnv(t)()
 
 	distro := Distributor("github.com")
 	a := func(n ...string) []Author {
@@ -140,9 +150,8 @@ func TestAllDistributors(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "Expected gopath not to exist")
 	assert.Nil(t, distros, "No distros exepcted.")
 
-	dir, deferF := makeProjectTree(t)
-	defer deferF()
-	defer patchEnv("GOPATH", dir)()
+	defer makeTreeAndEnv(t)()
+
 	distros, err = AllDistributors()
 	expected := []Distributor{
 		"aaa", "bbb", "ccc",
@@ -177,10 +186,7 @@ func TestAuthor_Projects(t *testing.T) {
 	assert.EqualError(t, err, msg)
 	assert.Empty(t, projects, "Expected to return no projects, got: %v", projects)
 
-	dir, deferF := makeProjectTree(t)
-	defer deferF()
-	defer patchEnv("GOPATH", dir)()
-
+	defer makeTreeAndEnv(t)()
 	projects, err = author.Projects()
 	if assert.NoError(t, err) {
 		assert.Equal(t, Project("github.com/matt3o12/gowork"), projects[0])
@@ -196,10 +202,7 @@ func TestFindAuthor(t *testing.T) {
 	assert.Equal(t, Author(""), author, msg, author)
 	assert.EqualError(t, err, "open not-exist/src: no such file or directory")
 
-	dir, deferF := makeProjectTree(t)
-	defer deferF()
-	defer patchEnv("GOPATH", dir)()
-
+	defer makeTreeAndEnv(t)()
 	author, err = FindAuthor("matt3o12")
 	assert.NoError(t, err)
 	assert.Equal(t, Author("github.com/matt3o12"), author)
@@ -210,10 +213,7 @@ func TestFindAuthor(t *testing.T) {
 }
 
 func TestFindAuthorIn(t *testing.T) {
-	dir, deferF := makeProjectTree(t)
-	defer deferF()
-	defer patchEnv("GOPATH", dir)()
-
+	defer makeTreeAndEnv(t)()
 	assertAuthor := func(distro Distributor, name string) {
 		expected := NewAuthor(distro, name)
 		author, err := FindAuthorIn(name, distro)
@@ -288,4 +288,154 @@ func TestProject(t *testing.T) {
 
 	defer patchEnv("GOPATH", "/gopath")()
 	assert.Equal(t, "/gopath/src/github.com/foo/bar/test", project.AbsPath())
+}
+
+func ProjectChToSlice(pCh chan ProjectMatch, eCh chan error) ([]ProjectMatch, error) {
+	done := false
+	var projects []ProjectMatch
+	for !done {
+		select {
+		case proj, ok := <-pCh:
+			if ok {
+				projects = append(projects, proj)
+			} else {
+				done = true
+			}
+
+		case err, ok := <-eCh:
+			if ok {
+				return nil, err
+			}
+
+			done = true
+		}
+	}
+
+	return projects, nil
+}
+
+func makeChs() (chan ProjectMatch, chan error) {
+	return make(chan ProjectMatch), make(chan error)
+}
+
+func TestProjectChToSlice(t *testing.T) {
+	pCh, eCh := makeChs()
+	go func() {
+		pCh <- ProjectMatch{Project: "test"}
+		pCh <- ProjectMatch{Project: "test2"}
+		pCh <- ProjectMatch{Project: "test3"}
+		close(pCh)
+		close(eCh)
+	}()
+
+	p := func(n ...string) []ProjectMatch {
+		projs := make([]ProjectMatch, len(n))
+		for i, name := range n {
+			projs[i] = ProjectMatch{Project: Project(name)}
+		}
+
+		return projs
+	}
+
+	projects, err := ProjectChToSlice(pCh, eCh)
+	assert.Equal(t, p("test", "test2", "test3"), projects)
+	assert.NoError(t, err)
+
+	pCh, eCh = makeChs()
+	go func() {
+		pCh <- ProjectMatch{Project: "test"}
+		eCh <- errors.New("test... ")
+		pCh <- ProjectMatch{Project: "test3"}
+		close(pCh)
+		close(eCh)
+	}()
+
+	projs, err := ProjectChToSlice(pCh, eCh)
+	assert.Empty(t, projs, "Expected no projects to be returned, got %v.", projs)
+	assert.EqualError(t, err, "test... ")
+}
+
+func TestFindProject(t *testing.T) {
+	defer makeTreeAndEnv(t)()
+
+	assertProject := func(expectedProj []ProjectMatch, projs []ProjectMatch, err error, msg ...interface{}) {
+		assert.Equal(t, expectedProj, projs, msg...)
+		assert.NoError(t, err)
+	}
+
+	findProject := func(needle string, search bool) ([]ProjectMatch, error) {
+		pCh, eCh := makeChs()
+		go FindProject(needle, search, pCh, eCh)
+		return ProjectChToSlice(pCh, eCh)
+	}
+
+	// test find all...
+	projs, err := findProject("", true)
+	expectedProjs := []ProjectMatch{
+		{"aaa/user/project", MatchProject},
+		{"bbb/user/project", MatchProject},
+		{"ccc/user/project", MatchProject},
+		{"code.google.com/p/cascadia", MatchProject},
+		{"github.com/matt3o12/gowork", MatchProject},
+		{"github.com/matt3o12/termui-widgets", MatchProject},
+		{"github.com/stretchr/testify", MatchProject},
+	}
+	assertProject(expectedProjs, projs, err)
+
+	// Test find nothing
+	projs, err = findProject("proj", false)
+	assertProject(nil, projs, err, "No results expected, got: %v.", projs)
+
+	// Test find proj*
+	projs, err = findProject("proj", true)
+	expectedProjs = []ProjectMatch{
+		{"aaa/user/project", MatchProject},
+		{"bbb/user/project", MatchProject},
+		{"ccc/user/project", MatchProject},
+	}
+
+	assertProject(expectedProjs, projs, err)
+
+	// Test search distro
+	projs, err = findProject("github.com", true)
+	expectedProjs = []ProjectMatch{
+		{"github.com/matt3o12/gowork", MatchDistro},
+		{"github.com/matt3o12/termui-widgets", MatchDistro},
+		{"github.com/stretchr/testify", MatchDistro},
+	}
+
+	assertProject(expectedProjs, projs, err)
+
+	// TEst search author
+	projs, err = findProject("matt3o12", false)
+	expectedProjs = []ProjectMatch{
+		{"github.com/matt3o12/gowork", MatchAuthor},
+		{"github.com/matt3o12/termui-widgets", MatchAuthor},
+	}
+
+	assertProject(expectedProjs, projs, err)
+
+	// Test what happens when search term matches the, distro, author and proj.
+	githubFolder := path.Join(os.Getenv("GOPATH"), "src", "github.com")
+	newFolder := path.Join(githubFolder, "gitter", "git")
+	os.RemoveAll(githubFolder)
+	os.MkdirAll(newFolder, 0777)
+
+	projs, err = findProject("git", true)
+	expectedProjs = []ProjectMatch{{"github.com/gitter/git", MatchProject}}
+	assertProject(expectedProjs, projs, err)
+}
+
+func TestGetBestMatch(t *testing.T) {
+	msg := "Distro: %#v, Author: %#v, Project: %#v\n\n"
+	t.Log("Values for matches:")
+	t.Logf(msg, MatchDistro, MatchAuthor, MatchProject)
+
+	assert.Equal(t, MatchDistro, getBestMatch(true, false, false))
+	assert.Equal(t, MatchAuthor, getBestMatch(false, true, false))
+	assert.Equal(t, MatchAuthor, getBestMatch(true, true, false))
+	assert.Equal(t, MatchProject, getBestMatch(false, false, true))
+	assert.Equal(t, MatchProject, getBestMatch(true, false, true))
+	assert.Equal(t, MatchProject, getBestMatch(true, true, true))
+	assert.Equal(t, MatchProject, getBestMatch(true, false, true))
 }
